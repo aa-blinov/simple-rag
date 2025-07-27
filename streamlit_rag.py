@@ -218,42 +218,88 @@ def main():
         if not docs:
             st.warning("Нет PDF, DOC или DOCX файлов в папке data/")
             return
+            
+        # Инициализация состояния выбранных файлов, если его ещё нет
+        if "selected_files" not in st.session_state:
+            st.session_state.selected_files = []
+            
+        # Получение базового пути data
+        data_dir = Path(os.getenv("DATA_PATH", "data"))
+        
         table = []
-        for f in docs:
+        files_by_index = {}  # Словарь для связи индекса и полного пути
+        
+        for i, f in enumerate(docs):
             file_type = f.suffix.lower()
             icon = "📄"
             if file_type == ".pdf":
                 icon = "📕"
             elif file_type in [".doc", ".docx"]:
                 icon = "📘"
-
-            table.append(
-                {
-                    "Файл": f"{icon} {f.name}",
-                    "Тип": file_type[1:].upper(),
-                    "Путь": str(f),
-                    "Статус": "✅" if str(f) in indexed else "❌",
-                    "Размер (KB)": f.stat().st_size // 1024,
-                    "Изменён": datetime.fromtimestamp(f.stat().st_mtime).strftime(
-                        "%Y-%m-%d %H:%M"
-                    ),
-                }
-            )
+            
+            # Выделяем относительный путь от директории data
+            try:
+                rel_path = f.relative_to(data_dir)
+                parent_dir = str(rel_path.parent)
+                if parent_dir == ".":
+                    dir_path = ""  # Корневая директория data
+                else:
+                    dir_path = parent_dir
+            except ValueError:
+                # Если файл находится вне директории data
+                dir_path = str(f.parent)
+            
+            # Сохраняем связь между индексом и полным путём
+            files_by_index[i] = str(f)
+            
+            # Проверяем, выбран ли файл
+            is_selected = str(f) in st.session_state.selected_files
+            is_indexed = str(f) in indexed
+            
+            table.append({
+                "Выбрать": not is_indexed and is_selected,  # Чекбокс активен только для неиндексированных файлов
+                "Файл": f"{icon} {f.stem}",  # Имя файла без расширения
+                "Тип": file_type[1:].upper(),  # Расширение большими буквами
+                "Директория": dir_path,  # Путь относительно data
+                "Статус": "✅ Проиндексирован" if is_indexed else "❌ Не индексирован",
+                "Размер (KB)": f.stat().st_size // 1024,
+                "Изменён": datetime.fromtimestamp(f.stat().st_mtime).strftime("%Y-%m-%d %H:%M"),
+            })
+        
+        # Создаём DataFrame и отображаем его с возможностью редактирования
         df = pd.DataFrame(table)
-        st.dataframe(df, use_container_width=True)
-        st.markdown("---")
-        sel = st.multiselect(
-            "Выберите файлы для индексации:",
-            [str(f) for f in docs if str(f) not in indexed],
+        edited_df = st.data_editor(
+            df,
+            column_config={
+                "Выбрать": st.column_config.CheckboxColumn(
+                    "Выбрать",
+                    help="Выберите файлы для индексации",
+                    default=False,
+                ),
+            },
+            use_container_width=True,
+            hide_index=True,
+            key="files_table",
+            disabled=["Статус", "Размер (KB)", "Изменён"]  # Делаем некоторые колонки неизменяемыми
         )
+        
+        # Обновляем список выбранных файлов на основе состояния таблицы
+        selected_indices = [i for i, row in enumerate(edited_df["Выбрать"]) if row]
+        st.session_state.selected_files = [files_by_index[i] for i in selected_indices if i in files_by_index]
+        
+        # Отображаем количество выбранных файлов
+        if len(st.session_state.selected_files) > 0:
+            st.info(f"Выбрано файлов для индексации: {len(st.session_state.selected_files)}")
+            
+        st.markdown("---")
         col1, col2 = st.columns(2)
         with col1:
             if st.button(
                 "📥 Индексировать выбранные",
-                disabled=not sel or st.session_state.indexing,
+                disabled=not st.session_state.selected_files or st.session_state.indexing,
             ):
                 st.session_state.indexing = True
-                index_files(sel)
+                index_files(st.session_state.selected_files)
         with col2:
             if st.button("🗑️ Очистить индекс"):
                 clear_index()
