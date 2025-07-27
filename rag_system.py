@@ -14,7 +14,7 @@ from llama_index.core.retrievers import QueryFusionRetriever
 from llama_index.core.retrievers.fusion_retriever import FUSION_MODES
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from llama_index.llms.openai import OpenAI
-from llama_index.readers.file import PDFReader
+from llama_index.readers.file import DocxReader, PDFReader
 from llama_index.vector_stores.chroma import ChromaVectorStore
 
 load_dotenv()
@@ -58,7 +58,6 @@ class LlamaIndexRAGSystem:
         self.query_engine = None
 
     def _setup_logging(self) -> None:
-        """Настройка логирования"""
         logging.basicConfig(
             level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
         )
@@ -95,39 +94,86 @@ class LlamaIndexRAGSystem:
         )
 
     def _get_chroma_client(self):
-        """Создание Chroma клиента"""
         return chromadb.PersistentClient(
             path=str(self.persist_path),
             settings=ChromaSettings(anonymized_telemetry=False),
         )
 
     def load_documents(self) -> List[Document]:
-        """Загрузка PDF документов"""
         if not self.data_path.exists():
             raise FileNotFoundError(f"Папка данных {self.data_path} не найдена")
 
         pdf_files = list(self.data_path.rglob("*.pdf"))
-        if not pdf_files:
-            raise FileNotFoundError(f"PDF файлы не найдены в {self.data_path}")
+        docx_files = list(self.data_path.rglob("*.docx"))
+        doc_files = list(self.data_path.rglob("*.doc"))
 
-        self.logger.info(f"Найдено {len(pdf_files)} PDF файлов")
+        total_files = len(pdf_files) + len(docx_files) + len(doc_files)
+
+        if total_files == 0:
+            raise FileNotFoundError(
+                f"Ни PDF, ни DOC/DOCX файлы не найдены в {self.data_path}"
+            )
+
+        self.logger.info(
+            f"Найдено {len(pdf_files)} PDF файлов, {len(docx_files)} DOCX файлов и {len(doc_files)} DOC файлов"
+        )
 
         documents = []
-        reader = PDFReader()
+        pdf_reader = PDFReader()
+        docx_reader = DocxReader()
 
         for pdf_file in pdf_files:
             try:
-                docs = reader.load_data(file=pdf_file)
+                docs = pdf_reader.load_data(file=pdf_file)
                 for doc in docs:
                     doc.metadata = doc.metadata or {}
                     doc.metadata["source"] = str(pdf_file)
                     doc.metadata["filename"] = pdf_file.name
                     doc.metadata["creation_date"] = datetime.now().isoformat()
+                    doc.metadata["file_type"] = "pdf"
 
                 documents.extend(docs)
-                self.logger.info(f"Загружено {len(docs)} страниц из {pdf_file.name}")
+                self.logger.info(
+                    f"Загружено {len(docs)} страниц из PDF: {pdf_file.name}"
+                )
             except Exception as e:
-                self.logger.error(f"Ошибка загрузки {pdf_file}: {e}")
+                self.logger.error(f"Ошибка загрузки PDF {pdf_file}: {e}")
+                continue
+
+        for docx_file in docx_files:
+            try:
+                docs = docx_reader.load_data(file=docx_file)
+                for doc in docs:
+                    doc.metadata = doc.metadata or {}
+                    doc.metadata["source"] = str(docx_file)
+                    doc.metadata["filename"] = docx_file.name
+                    doc.metadata["creation_date"] = datetime.now().isoformat()
+                    doc.metadata["file_type"] = "docx"
+
+                documents.extend(docs)
+                self.logger.info(
+                    f"Загружено {len(docs)} фрагментов из DOCX: {docx_file.name}"
+                )
+            except Exception as e:
+                self.logger.error(f"Ошибка загрузки DOCX {docx_file}: {e}")
+                continue
+
+        for doc_file in doc_files:
+            try:
+                docs = docx_reader.load_data(file=doc_file)
+                for doc in docs:
+                    doc.metadata = doc.metadata or {}
+                    doc.metadata["source"] = str(doc_file)
+                    doc.metadata["filename"] = doc_file.name
+                    doc.metadata["creation_date"] = datetime.now().isoformat()
+                    doc.metadata["file_type"] = "doc"
+
+                documents.extend(docs)
+                self.logger.info(
+                    f"Загружено {len(docs)} фрагментов из DOC: {doc_file.name}"
+                )
+            except Exception as e:
+                self.logger.error(f"Ошибка загрузки DOC {doc_file}: {e}")
                 continue
 
         self.logger.info(f"Всего загружено документов: {len(documents)}")

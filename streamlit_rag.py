@@ -1,16 +1,19 @@
 import os
-import streamlit as st
-import pandas as pd
-from pathlib import Path
 from datetime import datetime
-from dotenv import load_dotenv
+from pathlib import Path
+import time
+
 import chromadb
+import pandas as pd
+import streamlit as st
 from chromadb.config import Settings as ChromaSettings
-from rag_system import LlamaIndexRAGSystem
-from llama_index.embeddings.huggingface import HuggingFaceEmbedding
-from llama_index.readers.file import PDFReader
-from llama_index.vector_stores.chroma import ChromaVectorStore
+from dotenv import load_dotenv
 from llama_index.core import StorageContext, VectorStoreIndex
+from llama_index.embeddings.huggingface import HuggingFaceEmbedding
+from llama_index.readers.file import DocxReader, PDFReader
+from llama_index.vector_stores.chroma import ChromaVectorStore
+
+from rag_system import LlamaIndexRAGSystem
 
 load_dotenv()
 
@@ -37,9 +40,17 @@ st.set_page_config(page_title="RAG Search", page_icon="🔍", layout="wide")
 
 
 @st.cache_data(ttl=300)
-def get_pdf_files():
+def get_document_files():
     data_dir = Path(os.getenv("DATA_PATH", "data"))
-    return sorted(data_dir.rglob("*.pdf")) if data_dir.exists() else []
+    if not data_dir.exists():
+        return []
+
+    pdf_files = list(data_dir.rglob("*.pdf"))
+    docx_files = list(data_dir.rglob("*.docx"))
+    doc_files = list(data_dir.rglob("*.doc"))
+
+    all_files = sorted(pdf_files + docx_files + doc_files)
+    return all_files
 
 
 @st.cache_data(ttl=10)
@@ -68,17 +79,44 @@ def index_files(files):
         embed_model = get_embed_model()
 
         docs = []
-        reader = PDFReader()
+        pdf_reader = PDFReader()
+        docx_reader = DocxReader()
 
         total_files = len(files)
         for idx, f in enumerate(files):
-            status_text.text(f"Обработка файла {idx + 1}/{total_files}: {Path(f).name}")
-            file_docs = reader.load_data(file=Path(f))
-            for doc in file_docs:
-                doc.metadata = doc.metadata or {}
-                doc.metadata["source"] = str(f)
-                doc.metadata["filename"] = Path(f).name
-            docs.extend(file_docs)
+            file_path = Path(f)
+            file_ext = file_path.suffix.lower()
+            status_text.text(
+                f"Обработка файла {idx + 1}/{total_files}: {file_path.name}"
+            )
+
+            if file_ext == ".pdf":
+                reader = pdf_reader
+                file_type = "pdf"
+            elif file_ext in [".docx", ".doc"]:
+                reader = docx_reader
+                file_type = "docx" if file_ext == ".docx" else "doc"
+            else:
+                status_text.text(f"Пропуск неподдерживаемого файла: {file_path.name}")
+                continue
+
+            try:
+                file_docs = reader.load_data(file=file_path)
+                for doc in file_docs:
+                    doc.metadata = doc.metadata or {}
+                    doc.metadata["source"] = str(f)
+                    doc.metadata["filename"] = file_path.name
+                    doc.metadata["file_type"] = file_type
+                docs.extend(file_docs)
+                status_text.text(
+                    f"Успешно обработан файл {file_path.name}: получено {len(file_docs)} фрагментов"
+                )
+            except Exception as e:
+                status_text.text(f"Ошибка при обработке {file_path.name}: {e}")
+                st.error(f"Ошибка при обработке {file_path.name}: {e}")
+                time.sleep(2)
+                continue
+
             progress_bar.progress((idx + 1) / total_files)
 
         status_text.text("Сохранение в векторную базу данных...")
@@ -86,10 +124,9 @@ def index_files(files):
         client = get_chroma_client()
         try:
             col = client.get_or_create_collection("default")
-        except:
+        except Exception:
             col = client.create_collection("default")
 
-        # Проверяем метаданные
         missing_metadata = 0
         for i, doc in enumerate(docs):
             if "source" not in doc.metadata:
@@ -155,13 +192,13 @@ def main():
     )
     st.session_state.screen = "index" if screen == "Индексация" else "chat"
 
-    pdfs = get_pdf_files()
+    docs = get_document_files()
     indexed = get_indexed_files()
 
     st.sidebar.metric(
-        "PDF файлов",
-        len(pdfs),
-        delta=len(pdfs) - st.session_state.last_pdf_count
+        "Документов",
+        len(docs),
+        delta=len(docs) - st.session_state.last_pdf_count
         if st.session_state.last_pdf_count > 0
         else None,
     )
@@ -173,19 +210,27 @@ def main():
         else None,
     )
     st.sidebar.metric("Чат-сообщений", len(st.session_state.messages))
-    st.session_state.last_pdf_count = len(pdfs)
+    st.session_state.last_pdf_count = len(docs)
     st.session_state.last_indexed_count = len(indexed)
 
     if st.session_state.screen == "index":
         st.header("📚 Индексация документов")
-        if not pdfs:
-            st.warning("Нет PDF файлов в папке data/")
+        if not docs:
+            st.warning("Нет PDF, DOC или DOCX файлов в папке data/")
             return
         table = []
-        for f in pdfs:
+        for f in docs:
+            file_type = f.suffix.lower()
+            icon = "📄"
+            if file_type == ".pdf":
+                icon = "📕"
+            elif file_type in [".doc", ".docx"]:
+                icon = "📘"
+
             table.append(
                 {
-                    "Файл": f.name,
+                    "Файл": f"{icon} {f.name}",
+                    "Тип": file_type[1:].upper(),
                     "Путь": str(f),
                     "Статус": "✅" if str(f) in indexed else "❌",
                     "Размер (KB)": f.stat().st_size // 1024,
@@ -199,7 +244,7 @@ def main():
         st.markdown("---")
         sel = st.multiselect(
             "Выберите файлы для индексации:",
-            [str(f) for f in pdfs if str(f) not in indexed],
+            [str(f) for f in docs if str(f) not in indexed],
         )
         col1, col2 = st.columns(2)
         with col1:
