@@ -1,20 +1,19 @@
-<!-- house-style: template — fill this file in, then delete this line -->
-
 # Screenshots
 
-Images referenced from the README and the documents.
+There are no screenshots in this repository, and the folder holds this note
+instead.
 
-<!--
-  Put the files here and reference them from the README:
+The interface is a Streamlit application, and Streamlit's default theme
+decides what it looks like. A picture of it would show the theme of the
+Streamlit release the operator happens to have installed rather than a
+design decision made here, and it would be out of date the next time the
+theme moves.
 
-  ```markdown
-  ![The main window](docs/screenshots/main.png)
-  ```
+Nothing in the repository captures an image either. There is no script that
+drives the app, no fixture that starts the server and no image in the
+history of the repository.
 
-  Images are referenced by relative path, so they resolve both on GitHub and
-  in a local checkout. The house-style checker verifies that every image
-  reference points at a file that exists, so a renamed screenshot cannot
-  quietly break the README.
-
-  Delete this file once the project has images of its own.
--->
+What a screenshot would have to show is written down in
+[../../DESIGN.md](../../DESIGN.md): the two tabs, the three counters in the
+sidebar, the file grid, the log console under it, and the source panel
+under every answer.
