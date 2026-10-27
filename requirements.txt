@@ -10,5 +10,5 @@ llama-index-vector-stores-chroma==0.6.0
 pillow==13.0.0
 pydantic==2.14.1
 python-dotenv==1.2.4
-streamlit==1.66.0
+streamlit==1.66.1
 streamlit-aggrid==1.2.1.post2
